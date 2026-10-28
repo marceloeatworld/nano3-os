@@ -41,6 +41,9 @@ type Overrides struct {
 	// FanTarget is the day PID target in deg C (50..100); 0 means the MM's own target
 	// (80, 85, 90 C for levels 0, 1, 2). The night window always uses the MM's.
 	FanTarget int `json:"fan_target,omitempty"`
+	// NoUpdateCheck turns off the daily question to GitHub for a new release (the
+	// dashboard then never offers an update). Off by default: the check runs.
+	NoUpdateCheck bool `json:"no_update_check,omitempty"`
 	// LevelTHs is the hashrate nano3d measured at each work level (index = level),
 	// recorded after 10 minutes at a steady state, for the level planner on the page.
 	LevelTHs []float64 `json:"level_ths,omitempty"`

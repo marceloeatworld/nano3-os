@@ -237,3 +237,28 @@ Miner restored each run; btcminer mining normally afterwards. No intentional fir
   so far lived only on the miner), a quick start at the top of the README, and a GitHub Actions workflow
   that runs vet and the tests, builds the riscv64 binary on every push, and attaches it with its SHA-256
   to a release on a `v*` tag.
+
+### 22:40 - Published, release v0.1.0
+
+- Repository public at github.com/marceloeatworld/nano3-os, one commit. GitHub Actions on Ubuntu 26.04
+  (checkout, setup-go and upload-artifact v7) runs vet and the tests, builds the riscv64 binary and, on a
+  `v*` tag, publishes it with its SHA-256 as a release. The release binary was installed on the miner
+  through the update script and mined (7 then 2 shares accepted, 0 rejected, two restarts of 15 s).
+- The Nix Go toolchain and the upstream one give different bytes for the same source and flags; the
+  checksum next to the release binary is the reference.
+
+### 23:00 - Updates from the dashboard
+
+- `internal/update`: the latest release from the GitHub API, a semver comparison with the tag the binary
+  was built for (`-X main.release`, set by the workflow on a tag; a build from the tree is never offered
+  an update), and a download of `nano3d-riscv64` into `/tmp` that keeps the file only when its SHA-256 is
+  the one in the release's `.sha256`. The rootfs has no CA bundle, so the Mozilla roots come embedded
+  (`golang.org/x/crypto/x509roots/fallback`, 200 kB).
+- nano3d asks GitHub once a day (after NTP: TLS needs the clock; the owner can turn it off in the settings,
+  turning it on asks at once), shows the result in `/api/status` and on the dashboard as an Update card
+  with the release notes and a button (`POST /api/update`, settings login). The download runs off the main
+  loop with its progress on the page; a verified binary makes nano3d exit with code 5, and the start
+  script's loop checks the hash again and swaps the file into slot A before the restart: slot A cannot
+  hold two binaries, so the swap happens only once nano3d has exited, and never under a running process.
+- Tested from the PC against the real v0.1.0 release (API, checksum parsing, download, BusyBox-style
+  `sha256sum -c` on the staged pair), then live on the miner.

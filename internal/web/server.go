@@ -79,6 +79,22 @@ type Status struct {
 	PLLMHz      []int     `json:"pll_mhz"`
 	ASICVolts   []float32 `json:"asic_volts"`   // by ASIC index, MM units
 	ASICErrPct  []float64 `json:"asic_err_pct"` // by ASIC index
+
+	Update Update `json:"update"`
+}
+
+// Update is the state of the release check and of a self-update under way, for the
+// dashboard. The check is a daily question to GitHub; the Update button on the page
+// starts the download (POST /api/update).
+type Update struct {
+	Current  string `json:"current"`  // release tag this binary was built for, "" for a build from the tree
+	Latest   string `json:"latest"`   // newest release on GitHub, "" before the first successful check
+	URL      string `json:"url"`      // its release page
+	Newer    bool   `json:"newer"`    // Latest is newer than Current
+	State    string `json:"state"`    // "", "downloading", "restarting" (verified, nano3d restarts on it) or "error"
+	Progress int    `json:"progress"` // percent of the binary downloaded
+	Error    string `json:"error,omitempty"`
+	CheckedS int64  `json:"checked_s"` // seconds since the last successful check, -1 for none yet
 }
 
 // Level is the estimate for one work level, for choosing the level on the page.
@@ -116,6 +132,7 @@ type Settings struct {
 	CoinbaseTag string        `json:"coinbase_tag"` // up to 4 ASCII characters, "" for none
 	FanFixed    int           `json:"fan_fixed"`    // day fan duty in percent, 0 for the PID
 	FanTarget   int           `json:"fan_target"`   // day PID target in deg C, 0 for the MM's
+	UpdateCheck bool          `json:"update_check"` // ask GitHub for a new release once a day
 }
 
 // Server holds the latest status and settings for the handlers.
@@ -124,6 +141,7 @@ type Server struct {
 	status   atomic.Pointer[Status]
 	settings atomic.Pointer[Settings]
 	changes  chan Settings
+	updates  chan struct{}
 
 	mu      sync.Mutex
 	history []Sample // oldest first, at most historyLen
@@ -159,7 +177,7 @@ func (s *Server) getHistory(w http.ResponseWriter, r *http.Request) {
 
 // New returns a server whose settings take the given password for user root.
 func New(password string) *Server {
-	return &Server{password: password, changes: make(chan Settings)}
+	return &Server{password: password, changes: make(chan Settings), updates: make(chan struct{}, 1)}
 }
 
 // Publish replaces the status the page shows.
@@ -171,6 +189,9 @@ func (s *Server) SetSettings(x Settings) { s.settings.Store(&x) }
 // Changes delivers settings saved on the page, already validated.
 func (s *Server) Changes() <-chan Settings { return s.changes }
 
+// Updates delivers a signal each time the Update button on the page is pressed.
+func (s *Server) Updates() <-chan struct{} { return s.updates }
+
 // ListenAndServe serves until the listener fails.
 func (s *Server) ListenAndServe(addr string) error {
 	mux := http.NewServeMux()
@@ -180,6 +201,7 @@ func (s *Server) ListenAndServe(addr string) error {
 	mux.HandleFunc("GET /api/history", s.getHistory)
 	mux.HandleFunc("GET /api/settings", s.auth(s.getSettings))
 	mux.HandleFunc("POST /api/settings", s.auth(s.postSettings))
+	mux.HandleFunc("POST /api/update", s.auth(s.postUpdate))
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second}
 	return srv.ListenAndServe()
@@ -239,18 +261,8 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "starting", http.StatusServiceUnavailable)
 		return
 	}
-	// Cross-site protection: a page on another site can post a text/plain form
-	// carrying JSON, and the browser attaches the cached login. Such a request cannot
-	// set this content type, and a browser names its origin.
-	if ct, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";"); strings.TrimSpace(ct) != "application/json" {
-		http.Error(w, "want Content-Type: application/json", http.StatusUnsupportedMediaType)
+	if !sameSite(w, r) {
 		return
-	}
-	if o := r.Header.Get("Origin"); o != "" {
-		if u, err := url.Parse(o); err != nil || u.Host != r.Host {
-			http.Error(w, "cross-site request refused", http.StatusForbidden)
-			return
-		}
 	}
 	var x Settings
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&x); err != nil {
@@ -269,6 +281,36 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true, "restart": restart})
+}
+
+// sameSite refuses a POST that another site could have made. A page on another site
+// can post a text/plain form carrying JSON, and the browser attaches the cached login;
+// such a request cannot set this content type, and a browser names its origin.
+func sameSite(w http.ResponseWriter, r *http.Request) bool {
+	if ct, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";"); strings.TrimSpace(ct) != "application/json" {
+		http.Error(w, "want Content-Type: application/json", http.StatusUnsupportedMediaType)
+		return false
+	}
+	if o := r.Header.Get("Origin"); o != "" {
+		if u, err := url.Parse(o); err != nil || u.Host != r.Host {
+			http.Error(w, "cross-site request refused", http.StatusForbidden)
+			return false
+		}
+	}
+	return true
+}
+
+// postUpdate starts the self-update to the latest release; the status reports its
+// progress. The main loop ignores the request when no newer release is known.
+func (s *Server) postUpdate(w http.ResponseWriter, r *http.Request) {
+	if !sameSite(w, r) {
+		return
+	}
+	select {
+	case s.updates <- struct{}{}:
+	default: // one is already waiting for the main loop
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 // Validate checks settings from the page and normalizes the pool addresses

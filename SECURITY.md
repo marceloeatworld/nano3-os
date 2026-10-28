@@ -107,6 +107,15 @@ Not re-examined in this pass. The public Nano 3s report documents stock outbound
 build phones home was not tested here. The live captures (`captures/`) show only the configured pool
 (`<stock-default-pool-ip>:3303`) and `ntpd`, but the captures were short and only covered `/dev/ttyS1` and local API.
 
+## nano3-os outbound connections
+
+nano3d itself talks to the pools in its settings, to the NTP servers of the stock `ntpd`, to the Public Pool
+web address if one is set, and, once a day, to `api.github.com` and `github.com` for the release check and
+the update download (HTTPS, certificates checked against the Mozilla roots built into the binary, since the
+rootfs ships none). The release check is the only connection the owner did not configure; "Never check" on
+the settings page turns it off. Nothing is installed without the Update button, and a downloaded binary
+whose SHA-256 differs from the one the release publishes is discarded twice: by nano3d and by the start script.
+
 ## Notes
 
 - Findings 2 and 4-7 are in code that runs as root (`btcminer` is launched from `/etc/init.d/rcS` as root).

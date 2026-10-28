@@ -69,7 +69,26 @@ fallback() {
     done
 ) </dev/null >/dev/null 2>&1 &
 
+# swap_in installs a binary that the dashboard's update (nano3d exit code 5), or an
+# operator, left in /tmp with its checksum next to it. Slot A cannot hold two binaries,
+# so this runs only once nano3d has exited, and the old file goes before the new one
+# comes. A bad checksum discards the staged file and keeps the running binary.
+swap_in() {
+    [ -s /tmp/nano3d.new ] && [ -s /tmp/nano3d.new.sha256 ] || return 0
+    if (cd /tmp && sha256sum -c nano3d.new.sha256 >/dev/null 2>&1); then
+        if rm -f nano3d && cp /tmp/nano3d.new nano3d && chmod 755 nano3d && sync; then
+            logger -t nano3-os "nano3d updated: $(sha256sum nano3d | cut -c1-16)"
+        else
+            logger -t nano3-os "nano3d update failed: copy error, slot A may be full"
+        fi
+    else
+        logger -t nano3-os "staged nano3d rejected: checksum mismatch"
+    fi
+    rm -f /tmp/nano3d.new /tmp/nano3d.new.sha256
+}
+
 while true; do
     ./nano3d -wifi </dev/null 2>&1 | logger -t nano3d
+    swap_in
     sleep 10
 done

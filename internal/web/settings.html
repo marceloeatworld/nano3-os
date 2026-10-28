@@ -46,6 +46,7 @@ button:disabled { opacity: .5; cursor: default; }
     <div><div class="label">CA certificate (PEM) of that address's HTTPS, e.g. the StartOS or Umbrel local root CA (optional)</div><textarea id="pool_api_ca" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
     <div class="row"><div><div class="label">Minimum fan by day: the automatic fan holds the chips at the target and never goes under this floor, so the chips run cooler and the fan louder. Over-heat still forces 100 %. The night window has no floor.</div><select id="fan_fixed"></select></div>
       <div><div class="label">Target temperature of the automatic fan, by day (MM's: 90 °C at level 2, about 73 % fan; 85 °C runs about 85 %)</div><select id="fan_target"></select></div></div>
+    <div><div class="label">New releases: ask GitHub once a day and offer the update on the dashboard (GitHub then sees this miner's public address; nothing is installed without the Update button)</div><select id="update_check"><option value="1">Check once a day</option><option value="0">Never check</option></select></div>
     <div><div class="label">Coinbase tag, up to 4 ASCII characters written into a block this miner finds (needs a pool with an 8-byte extranonce2; optional)</div><input id="coinbase_tag" maxlength="4" placeholder="HODL"></div>
     <div><button type="submit">Save</button> <span id="msg"></span></div>
     <div class="label">Levels and night mode apply at once. A pool change restarts nano3d (about 15 s without mining). The stock configuration is not changed.</div>
@@ -111,6 +112,7 @@ async function load() {
   $('pool_api').value = x.pool_api;
   $('pool_api_ca').value = x.pool_api_ca;
   $('coinbase_tag').value = x.coinbase_tag || '';
+  $('update_check').value = x.update_check ? '1' : '0';
   // A value set from the command line or the API that the list lacks is kept, not reset.
   const withSaved = (list, v) => (v && !list.includes(v) ? [...list, v].sort((a, b) => b - a) : list);
   $('fan_target').replaceChildren(new Option("MM's target", '0', false, !x.fan_target),
@@ -138,6 +140,7 @@ $('f').addEventListener('submit', async e => {
     pool_api: $('pool_api').value.trim(), pool_api_ca: $('pool_api_ca').value.trim(),
     price_kwh: +$('price_kwh').value || 0, currency: $('currency').value.trim(),
     coinbase_tag: $('coinbase_tag').value.trim(), fan_fixed: +$('fan_fixed').value, fan_target: +$('fan_target').value,
+    update_check: $('update_check').value === '1',
   };
   const b = e.target.querySelector('button[type=submit]');
   b.disabled = true;

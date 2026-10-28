@@ -1,5 +1,6 @@
 #!/bin/sh
-# Replace nano3d in the live slot: the start script's loop restarts it within 10 s.
+# Replace nano3d in the live slot by hand (the dashboard's Update button does the same
+# from a GitHub release): the start script's loop restarts it within 10 s.
 # Usage: update-nano3d.sh [signal]   (default TERM; KILL skips the exiting nano3d's clean-up)
 set -e
 [ -s /tmp/nano3d.new ]
@@ -16,4 +17,5 @@ rm -f /mnt/heater/app/nano3d
 cp /tmp/nano3d.new /mnt/heater/app/nano3d
 chmod 755 /mnt/heater/app/nano3d
 sync
+rm -f /tmp/nano3d.new /tmp/nano3d.new.sha256
 logger -t nano3-os "nano3d updated: $(sha256sum /mnt/heater/app/nano3d | cut -c1-16)"

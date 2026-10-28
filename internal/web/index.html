@@ -65,6 +65,10 @@ ul.checks li { padding: 3px 0; font-size: 13px; }
 svg { width: 100%; height: 66px; display: block; margin-top: 4px; }
 .axis { display: flex; justify-content: space-between; color: var(--dim); font-size: 10px; margin-top: 2px; }
 #err { display: none; }
+#upd { display: none; border-color: var(--accent); }
+#upd .val { font-size: 16px; font-weight: 500; }
+#upd button { padding: 5px 14px; font: inherit; font-size: 13px; color: #fff; background: var(--accent); border: 0; border-radius: 3px; cursor: pointer; margin-top: 6px; }
+#upd button:disabled { opacity: .5; cursor: default; }
 @media (max-width: 560px) {
   main { padding: 10px 12px 20px; gap: 8px; }
   #poolcard, #sharescard { grid-column: 1 / -1; }
@@ -79,6 +83,9 @@ svg { width: 100%; height: 66px; display: block; margin-top: 4px; }
 <header><strong><span id="dot"></span>nano3-os</strong><span><span id="verwrap"><span id="ver"></span> &middot;</span> <a href="/settings">Settings</a><button id="privacy" type="button" title="Blur the pool, the address and the IP, for a screenshot">Blur private</button></span></header>
 <main>
   <div class="card wide bad" id="err">No answer from the miner.</div>
+  <div class="card wide" id="upd"><div class="label">Update</div><div class="val" id="updtext"></div>
+    <div class="label"><a id="updlink" href="#" target="_blank" rel="noopener">Release notes</a> &middot; nano3d downloads the binary, checks its SHA-256 and restarts on it, about 20 s without mining. The stock app in slot B stays the fallback.</div>
+    <button type="button" id="updbtn">Update now</button> <span class="bad" id="upderr"></span></div>
   <div class="card" id="hero"><div class="label">Hashrate (MM)</div><span class="big" id="ths">-</span> TH/s
     <div class="label">expected <span id="exp">-</span> TH/s &middot; level <span id="level"></span> &middot; safety <span id="safety"></span> &middot; up <span id="up"></span></div></div>
 
@@ -191,6 +198,15 @@ async function tick() {
     $('dot').className = s.safety === 'ok' && s.pool ? 'good' : 'bad';
     $('up').textContent = dur(s.uptime_s);
 
+    const u = s.update || {};
+    $('upd').style.display = u.newer || u.state ? 'block' : 'none';
+    $('updlink').href = u.url || '#';
+    $('upderr').textContent = u.state === 'error' ? u.error : '';
+    $('updbtn').disabled = u.state === 'downloading' || u.state === 'restarting';
+    $('updtext').textContent = u.state === 'downloading' ? 'Downloading ' + u.latest + ': ' + u.progress + ' %'
+      : u.state === 'restarting' ? u.latest + ' verified. nano3d restarts on it; this page is back in about 20 s.'
+      : u.latest + ' is available' + (u.current ? ' (running ' + u.current + ')' : '') + '.';
+
     const havePower = s.power_w >= 0;
     $('pw').textContent = havePower ? s.power_w + ' W' : '-';
     $('vin').textContent = havePower ? s.input_v.toFixed(2) + ' V' : '- V';
@@ -273,6 +289,17 @@ function privacy(on) {
   try { localStorage.setItem('private', on ? '1' : ''); } catch (e) {}
 }
 $('privacy').addEventListener('click', () => privacy(!document.body.classList.contains('private')));
+// The Update button needs the settings login; the browser asks for it on the first press.
+$('updbtn').addEventListener('click', async () => {
+  $('updbtn').disabled = true;
+  try {
+    const r = await fetch(api('/api/update'), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+    if (!r.ok) $('upderr').textContent = await r.text();
+  } catch (e) {
+    $('upderr').textContent = 'No answer from the miner: ' + e.message;
+  }
+  tick();
+});
 try { privacy(localStorage.getItem('private') === '1'); } catch (e) {}
 // A phone pauses timers in the background: refresh as soon as the page is back in view.
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { tick(); history(); } });

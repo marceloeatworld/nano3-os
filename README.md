@@ -35,7 +35,7 @@ firmware-upgrade command and never writes the stock configuration.
 3. Run it from RAM first, no flash write: `FLASHING.md` step 1. The stock app comes back when the session ends.
 4. Write app slot A and boot it: `FLASHING.md` steps 2 and 3. The stock app stays in slot B and the board
    falls back to it on its own if nano3d fails to come up after a boot.
-5. Done. Open `http://<miner>/`. Later binaries: `FLASHING.md`, "Update a running install".
+5. Done. Open `http://<miner>/`. New releases show up there with an Update button.
 
 | Milestone | Status |
 |---|---|
@@ -47,6 +47,7 @@ firmware-upgrade command and never writes the stock configuration.
 | 6. Boot hardening: guard in the root filesystem (SSH, Wi-Fi, return to slot A), fail-back to the first pool | Done. Reboot test 2026-10-28: mining 24 s after the reboot command |
 | 7. Code audit by three models plus vet, staticcheck, gosec, govulncheck, race detector | Done 2026-10-28, fixes applied (`JOURNAL.md`) |
 | 8. 24 h unattended run | Running since 2026-10-28 evening |
+| 9. Updates from the dashboard: GitHub release found, downloaded, SHA-256 checked, swapped in by the start script | Done. Live 2026-10-28 |
 
 - Day to day: nothing to do. The miner runs level 2 by day and the level set for the
   night window by itself (on this unit level 0 from 22:00 to 08:00: 61 W, fan near
@@ -79,7 +80,10 @@ firmware-upgrade command and never writes the stock configuration.
   address and the IP for a screenshot. `http://<miner>/api/status` returns the status
   as JSON, `/api/history` the charts' data.
   With a Public Pool web address (and, for HTTPS on StartOS or Umbrel, its local root CA)
-  in the settings, it also shows the pool's view of the worker. `http://<miner>/settings` (user `root`, password `root`, as the stock web
+  in the settings, it also shows the pool's view of the worker. Once a day it asks GitHub
+  for the latest release and, when there is a newer one, shows an Update button: nano3d
+  downloads the binary, checks its SHA-256 against the one the release publishes and
+  restarts on it (`FLASHING.md`, "Update a running install"); the check can be turned off. `http://<miner>/settings` (user `root`, password `root`, as the stock web
   login) changes the work level, the night mode (time zone picked from a list), the day
   fan (automatic at the MM's or a cooler target, with an optional minimum duty under it;
   the night window always runs the MM's automatic fan alone), the pools, the electricity price and

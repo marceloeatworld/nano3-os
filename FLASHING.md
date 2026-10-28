@@ -140,9 +140,21 @@ to slot A by itself. `fw_setenv app_partition A && reboot` brings nano3-os back 
 
 ### Update a running install
 
-Slot A has about 3.6 MB free, less than one binary, so the running `nano3d` is stopped and deleted before
-the new one is copied. `tools/update-nano3d.sh` does that; the start script's loop restarts `nano3d` within
-10 s. Install the script once on the miner, in the data partition so it survives a reboot. From the PC
+From the dashboard: once a day nano3d asks GitHub for the latest release (an unauthenticated API call;
+"Never check" on the settings page turns it off). When a newer release exists, `http://<miner>/` shows an
+Update card with the release notes and an Update button (settings login). nano3d then downloads
+`nano3d-riscv64` and its `.sha256` from the release into `/tmp`, checks the hash, and exits with code 5. The
+start script's loop checks the hash again, swaps the binary into slot A (the old file goes first: slot A has
+about 3.6 MB free, less than one binary) and restarts nano3d, about 20 s without mining. A release binary
+knows its tag (`-X main.release`, set by the workflow), a build from the tree does not and is never offered
+an update. Installs made before this feature run an older start script: copy the current one once,
+`scp tools/nano3-os-start.sh admin@<miner>:/tmp/` and on the miner
+`sudo sh -c 'rm -f /mnt/heater/app/btcminer && cp /tmp/nano3-os-start.sh /mnt/heater/app/btcminer && chmod 755 /mnt/heater/app/btcminer && sync'`
+(a new file, not a write into the running script); it takes effect at the next reboot.
+
+By hand, for a build of your own: `tools/update-nano3d.sh` stops and deletes the running `nano3d`, copies the
+new one and lets the start script's loop restart it within 10 s. Install the script once on the miner, in
+the data partition so it survives a reboot. From the PC
 `scp tools/update-nano3d.sh admin@<miner>:/tmp/`, then on the miner
 `sudo mkdir -p /data/nano3-os && sudo cp /tmp/update-nano3d.sh /data/nano3-os/ && sudo chmod 755 /data/nano3-os/update-nano3d.sh`.
 

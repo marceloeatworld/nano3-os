@@ -25,8 +25,11 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - name: Build nano3d for the miner
+        # On a tag the binary knows its release, so the miner can offer newer ones.
+        env:
+          RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
         run: |
-          GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o nano3d-riscv64 ./cmd/nano3d
+          GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.release=$RELEASE" -o nano3d-riscv64 ./cmd/nano3d
           sha256sum nano3d-riscv64 > nano3d-riscv64.sha256
           cat nano3d-riscv64.sha256
       - uses: actions/upload-artifact@v7

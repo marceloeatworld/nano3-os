@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"flag"
@@ -26,6 +27,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"slices"
+	"sync/atomic"
 	"syscall"
 	"time"
 	_ "time/tzdata" // zone data for -tz, independent of the miner's /usr/share/zoneinfo
@@ -37,22 +39,30 @@ import (
 	"nano3-os/internal/poolstats"
 	"nano3-os/internal/screen"
 	"nano3-os/internal/stratum"
+	"nano3-os/internal/update"
 	"nano3-os/internal/web"
 	"nano3-os/internal/work"
 )
 
 // Exit codes: 0 done, 1 error, 2 bad arguments or config, 3 the MM asked for a reset
-// (status 4 overheat or 7), 4 new pools saved on the web page. The caller (session
-// script or boot script) restarts a miner.
+// (status 4 overheat or 7), 4 new pools saved on the web page, 5 a new release waits in
+// /tmp/nano3d.new (the start script swaps it in). The caller (session script or boot
+// script) restarts a miner.
 const (
 	exitMMReset = 3
 	exitRestart = 4
+	exitUpdate  = 5
 )
 
 var (
 	errRestart = errors.New("pools changed on the web page: restarting to use them")
+	errUpdate  = errors.New("new release staged in " + update.Staged + ": restarting on it")
 	errSignal  = errors.New("signal: stopping")
 )
+
+// release is the tag the workflow built this binary for (-X main.release=vX.Y.Z); ""
+// for a build from the tree, which the release check then leaves alone.
+var release string
 
 const (
 	pollEvery   = 100 * time.Millisecond
@@ -79,6 +89,10 @@ const (
 	// fullPowerDuty is the fan duty the PID settles at on level 2 (72 %, both under
 	// stock btcminer and under nano3d, 10-minute run): the start point after a level rise.
 	fullPowerDuty = 720
+
+	// updateEvery is how often GitHub is asked for a new release (an unauthenticated
+	// API call; the owner can turn the check off on the settings page).
+	updateEvery = 24 * time.Hour
 
 	// Electricity price used until one is saved on the web page: the Portuguese
 	// regulated simple tariff (ERSE, 6.9 kVA), 0.1711 EUR/kWh from 1 October 2026
@@ -252,6 +266,9 @@ func main() {
 	case errors.Is(err, errRestart):
 		log.Print(err)
 		os.Exit(exitRestart)
+	case errors.Is(err, errUpdate):
+		log.Print(err)
+		os.Exit(exitUpdate)
 	case err != nil:
 		log.Print(err)
 		os.Exit(1)
@@ -341,7 +358,7 @@ func ready(pc *stratum.Client, stop <-chan os.Signal) error {
 	}
 }
 
-// version is the VCS revision nano3d was built from, for the web page.
+// version is the release tag and VCS revision nano3d was built from, for the web page.
 func version() string {
 	rev, dirty := "", false
 	if bi, ok := debug.ReadBuildInfo(); ok {
@@ -359,6 +376,9 @@ func version() string {
 	}
 	if dirty {
 		rev += "-dirty"
+	}
+	if release != "" {
+		return "nano3-os " + release + " (" + rev + ")"
 	}
 	return "nano3-os " + rev
 }
@@ -471,13 +491,14 @@ func run(o options) error {
 	start, ver := time.Now(), version()
 	var webs *web.Server
 	var changes <-chan web.Settings
+	var updates <-chan struct{}
 	if o.http != "" {
 		pw := o.ov.WebPassword
 		if pw == "" {
 			pw = "root"
 		}
 		webs = web.New(pw)
-		changes = webs.Changes()
+		changes, updates = webs.Changes(), webs.Updates()
 		go func() { log.Printf("web: %v", webs.ListenAndServe(o.http)) }()
 	}
 	settings := func() web.Settings {
@@ -488,7 +509,7 @@ func run(o options) error {
 		return web.Settings{Level: o.level, Night: night, NightLevel: o.nightLevel, TZ: o.loc.String(),
 			Pools: o.pools, PoolAPI: o.ov.PoolAPI, PoolAPICA: o.ov.PoolAPICA,
 			PriceKWh: o.ov.PriceKWh, Currency: o.ov.Currency, CoinbaseTag: o.ov.CoinbaseTag,
-			FanFixed: max(o.fanFixed, 0), FanTarget: o.target}
+			FanFixed: max(o.fanFixed, 0), FanTarget: o.target, UpdateCheck: !o.ov.NoUpdateCheck}
 	}
 	// save writes the levels, night mode and fan in force to nano3d's settings file.
 	save := func() {
@@ -743,6 +764,63 @@ func run(o options) error {
 	var view *poolstats.Worker
 	var viewErr string
 	var lastView time.Time
+	// Release check and self-update. A goroutine asks GitHub for the latest release once
+	// a day (and when the owner turns the check on), once NTP has set the clock, which
+	// TLS needs. The download runs off the main loop too; the loop only keeps the state
+	// for the page and exits once a verified binary waits in /tmp.
+	found := make(chan update.Release, 1)
+	checkNow := make(chan struct{}, 1)
+	var checkOn atomic.Bool
+	checkOn.Store(!o.ov.NoUpdateCheck)
+	go func() {
+		wait := time.Duration(0)
+		for {
+			select {
+			case <-checkNow:
+			case <-time.After(wait):
+			}
+			wait = updateEvery
+			for time.Now().Year() < 2020 {
+				time.Sleep(10 * time.Second)
+			}
+			if !checkOn.Load() {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			r, err := update.Latest(ctx, ver)
+			cancel()
+			if err != nil {
+				log.Printf("update check: %v", err)
+				wait = time.Hour
+				continue
+			}
+			select {
+			case found <- r:
+			default:
+			}
+		}
+	}()
+	var latest *update.Release
+	var lastCheck, restartAt time.Time
+	downloading, updateErr := false, ""
+	var progress atomic.Int64 // percent of the binary downloaded
+	downloaded := make(chan error, 1)
+	updateInfo := func(now time.Time) web.Update {
+		u := web.Update{Current: release, Progress: int(progress.Load()), Error: updateErr, CheckedS: -1}
+		if latest != nil {
+			u.Latest, u.URL, u.Newer = latest.Tag, latest.URL, update.Newer(release, latest.Tag)
+			u.CheckedS = int64(now.Sub(lastCheck).Seconds())
+		}
+		switch {
+		case !restartAt.IsZero():
+			u.State = "restarting"
+		case downloading:
+			u.State = "downloading"
+		case updateErr != "":
+			u.State = "error"
+		}
+		return u
+	}
 	var presses <-chan struct{}
 	if o.button {
 		if b, err := board.OpenButton(); err != nil {
@@ -803,6 +881,14 @@ func run(o options) error {
 			if newPools {
 				o.pools, o.ov.Pools = x.Pools, x.Pools
 			}
+			if x.UpdateCheck && o.ov.NoUpdateCheck { // turned on: ask now, not in a day
+				select {
+				case checkNow <- struct{}{}:
+				default:
+				}
+			}
+			o.ov.NoUpdateCheck = !x.UpdateCheck
+			checkOn.Store(x.UpdateCheck)
 			save()
 			log.Printf("web: settings saved (level %d, night %q level %d, tz %s, new pools %v)",
 				o.level, x.Night, o.nightLevel, o.loc, newPools)
@@ -810,10 +896,48 @@ func run(o options) error {
 				time.Sleep(time.Second) // let the web page get its answer first
 				return errRestart
 			}
+		case r := <-found:
+			if latest == nil || latest.Tag != r.Tag {
+				log.Printf("update: latest release %s (running %q)", r.Tag, release)
+			}
+			latest, lastCheck = &r, time.Now()
+		case <-updates: // the Update button on the dashboard
+			if downloading || !restartAt.IsZero() {
+				break
+			}
+			if latest == nil || !update.Newer(release, latest.Tag) {
+				updateErr = "no newer release known"
+				break
+			}
+			downloading, updateErr = true, ""
+			progress.Store(0)
+			r := *latest
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+				defer cancel()
+				downloaded <- update.Download(ctx, r, ver, func(done, total int64) {
+					if total > 0 {
+						progress.Store(done * 100 / total)
+					}
+				})
+			}()
+			log.Printf("update: downloading %s", r.Tag)
+		case err := <-downloaded:
+			downloading = false
+			if err != nil {
+				updateErr = err.Error()
+				log.Printf("update: %v", err)
+				break
+			}
+			log.Printf("update: %s verified and staged in %s", latest.Tag, update.Staged)
+			restartAt = time.Now().Add(3 * time.Second) // the page gets a status that says so first
 		default:
 		}
 
 		now := time.Now()
+		if !restartAt.IsZero() && now.After(restartAt) {
+			return errUpdate
+		}
 		if now.Sub(lastFeed) >= feedEvery {
 			feed() // fed from this loop only: a stalled loop lets the watchdog reboot the board
 			lastFeed = now
@@ -970,7 +1094,7 @@ func run(o options) error {
 					PowerW: powerW, InputV: power.InputV, InputA: inputA, JPerTH: jth, EnergyKWh: energyWh / 1000,
 					PriceKWh: o.ov.PriceKWh, Currency: o.ov.Currency, Levels: levelEstimates(levels, freqs, settledSpeed, o.ov.LevelTHs),
 					ExpectedTHs: float64(extra.SpeedMHs) / 1e6, HWErrPct: extra.DHPct, PLLMHz: slices.Clone(freqs[:]),
-					ASICVolts: byASIC(asicVolts), ASICErrPct: byASIC(asicErr)})
+					ASICVolts: byASIC(asicVolts), ASICErrPct: byASIC(asicErr), Update: updateInfo(now)})
 			}
 			if scr != nil {
 				var hist []float64
