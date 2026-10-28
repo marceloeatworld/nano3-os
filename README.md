@@ -37,6 +37,12 @@ firmware-upgrade command and never writes the stock configuration.
    falls back to it on its own if nano3d fails to come up after a boot.
 5. Done. Open `http://<miner>/`. New releases show up there with an Update button.
 
+**Disclaimer.** nano3-os is an independent project, not affiliated with Canaan. It drives
+mining hardware with code worked out by reverse engineering. You flash and run it at your
+own risk: the author takes no responsibility for damaged or bricked units, lost hashrate,
+lost coins, voided warranties or any other loss. The MIT License (`LICENSE`) says the same
+in legal terms: no warranty of any kind.
+
 | Milestone | Status |
 |---|---|
 | 1. Daemon: K210 bring-up, pool client, job encoder, nonce check, submit | Done. Live on the miner: 64/64 nonces valid, 14/14 shares accepted |
