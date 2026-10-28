@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>nano3-os settings</title>
+<style>
+:root { --bg: #f4f5f5; --card: #fff; --fg: #24292e; --dim: #6e7680; --accent: #3d71d9; --bad: #e0226e; --good: #1a9f5f; --line: #dfe2e6; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111217; --card: #181b1f; --fg: #d8d9df; --dim: #9fa7b3; --accent: #5794f2; --bad: #f2495c; --good: #73bf69; --line: #2c3235; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+header strong { font-size: 16px; letter-spacing: .02em; }
+header a { color: var(--accent); text-decoration: none; }
+main { max-width: 760px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 3px; padding: 14px 16px; display: grid; gap: 10px; }
+.label { color: var(--dim); font-size: 13px; }
+.row { display: grid; gap: 8px; grid-template-columns: 2fr 2fr 1fr; }
+@media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
+textarea { font: 12px/1.3 monospace; }
+input, select, textarea { width: 100%; padding: 8px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 3px; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+button { padding: 9px 18px; font: inherit; font-weight: 600; color: #fff; background: var(--accent); border: 0; border-radius: 3px; cursor: pointer; }
+button.small { padding: 4px 10px; font-size: 13px; font-weight: 400; margin-top: 6px; }
+button:disabled { opacity: .5; cursor: default; }
+#msg.bad { color: var(--bad); }
+#msg.good { color: var(--good); }
+</style>
+</head>
+<body>
+<header><strong>nano3-os settings</strong><a href="/">Status</a></header>
+<main>
+  <form class="card" id="f">
+    <div><div class="label">Work level (0 is the quietest)</div><select id="level"></select><div class="label" id="level_sum"></div></div>
+    <div><div class="label">Night mode window, HH:MM-HH:MM (empty: off)</div><input id="night" placeholder="22:00-08:00"></div>
+    <div><div class="label">Night level</div><select id="night_level"></select><div class="label" id="night_level_sum"></div></div>
+    <div><div class="label">Time zone of the window</div><select id="tz"></select><button class="small" type="button" id="tz_here">Use this browser's time zone</button></div>
+    <div class="label">Pools, tried in order (host:port, worker user, password)</div>
+    <div id="pools"></div>
+    <div class="row"><div><div class="label">Electricity price per kWh, taxes included (default 0.21 EUR)</div><input id="price_kwh" type="number" min="0" max="100" step="0.0001" placeholder="0.20"></div>
+      <div><div class="label">Currency</div><input id="currency" maxlength="8" placeholder="EUR"></div></div>
+    <div><div class="label">Public Pool web address, to show the pool's view of this miner (optional)</div><input id="pool_api" placeholder="https://host:port"></div>
+    <div><div class="label">CA certificate (PEM) of that address's HTTPS, e.g. the StartOS or Umbrel local root CA (optional)</div><textarea id="pool_api_ca" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
+    <div class="row"><div><div class="label">Minimum fan by day: the automatic fan holds the chips at the target and never goes under this floor, so the chips run cooler and the fan louder. Over-heat still forces 100 %. The night window has no floor.</div><select id="fan_fixed"></select></div>
+      <div><div class="label">Target temperature of the automatic fan, by day (MM's: 90 °C at level 2, about 73 % fan; 85 °C runs about 85 %)</div><select id="fan_target"></select></div></div>
+    <div><div class="label">Coinbase tag, up to 4 ASCII characters written into a block this miner finds (needs a pool with an 8-byte extranonce2; optional)</div><input id="coinbase_tag" maxlength="4" placeholder="HODL"></div>
+    <div><button type="submit">Save</button> <span id="msg"></span></div>
+    <div class="label">Levels and night mode apply at once. A pool change restarts nano3d (about 15 s without mining). The stock configuration is not changed.</div>
+  </form>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const api = p => location.origin + p; // fetch() rejects a URL with user:pass, location.origin has none
+// Each level is listed with what it draws, hashes and costs; the line under the
+// select shows the same for the level chosen, at the price in the form.
+let LEVELS = [];
+function price() { return +$('price_kwh').value || 0; }
+function costText(l) {
+  const kwh = l.watts * 24 / 1000, p = price(), cur = $('currency').value.trim();
+  let t = 'about ' + l.watts + ' W';
+  if (l.est_ths > 0) t += ', ' + l.est_ths.toFixed(2) + ' TH/s, ' + (l.watts / l.est_ths).toFixed(1) + ' J/TH';
+  t += ', ' + kwh.toFixed(2) + ' kWh/day';
+  if (p > 0) t += ', ' + (kwh * p).toFixed(2) + ' ' + cur + '/day, ' + (kwh * 30 * p).toFixed(1) + ' ' + cur + '/month';
+  return t;
+}
+function levels(sel, max, v) {
+  sel.replaceChildren(...Array.from({length: max}, (_, i) =>
+    new Option(LEVELS[i] ? i + ': ' + LEVELS[i].watts + ' W' + (LEVELS[i].est_ths > 0 ? ', ' + LEVELS[i].est_ths.toFixed(2) + ' TH/s' : '') : String(i), String(i), false, i === v)));
+}
+// The time zones the browser knows (the IANA names nano3d's embedded zone data takes),
+// grouped by region. The saved zone is always listed, even on an old browser.
+function timeZones(sel, cur) {
+  let known = [];
+  try { known = Intl.supportedValuesOf('timeZone'); } catch (e) {}
+  const groups = {};
+  for (const z of new Set(['UTC', cur, ...known].filter(Boolean))) {
+    const g = z.includes('/') ? z.slice(0, z.indexOf('/')) : 'Other';
+    (groups[g] ||= []).push(z);
+  }
+  sel.replaceChildren(...Object.keys(groups).sort().map(g => {
+    const og = document.createElement('optgroup');
+    og.label = g;
+    og.append(...groups[g].sort().map(z => new Option(z.replace(/_/g, ' '), z, false, z === cur)));
+    return og;
+  }));
+}
+function summary() {
+  for (const id of ['level', 'night_level']) {
+    const l = LEVELS[+$(id).value];
+    $(id + '_sum').textContent = l ? costText(l) : '';
+  }
+}
+function msg(t, ok) { $('msg').textContent = t; $('msg').className = ok ? 'good' : 'bad'; }
+$('tz_here').addEventListener('click', () => {
+  const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (z) timeZones($('tz'), z);
+});
+async function load() {
+  const [st, x] = await Promise.all([fetch(api('/api/status')).then(r => r.json()), fetch(api('/api/settings')).then(r => r.json())]);
+  LEVELS = st.levels || [];
+  levels($('level'), st.max_level, x.level);
+  levels($('night_level'), st.max_level, x.night_level);
+  $('price_kwh').value = x.price_kwh || '';
+  $('currency').value = x.currency;
+  summary();
+  $('night').value = x.night;
+  timeZones($('tz'), x.tz);
+  $('pool_api').value = x.pool_api;
+  $('pool_api_ca').value = x.pool_api_ca;
+  $('coinbase_tag').value = x.coinbase_tag || '';
+  // A value set from the command line or the API that the list lacks is kept, not reset.
+  const withSaved = (list, v) => (v && !list.includes(v) ? [...list, v].sort((a, b) => b - a) : list);
+  $('fan_target').replaceChildren(new Option("MM's target", '0', false, !x.fan_target),
+    ...withSaved([85, 80, 75, 70], x.fan_target).map(t => new Option(t + ' °C', String(t), false, t === x.fan_target)));
+  $('fan_fixed').replaceChildren(new Option('No floor', '0', false, !x.fan_fixed),
+    ...withSaved(Array.from({length: 13}, (_, i) => 40 + 5 * i), x.fan_fixed).map(p => new Option('at least ' + p + ' %', String(p), false, p === x.fan_fixed)));
+  const pools = x.pools.concat([{}, {}, {}]).slice(0, 3);
+  $('pools').replaceChildren(...pools.map(p => {
+    const r = document.createElement('div');
+    r.className = 'row';
+    for (const [k, ph] of [['addr', 'pool.example:3333'], ['user', 'bc1q....worker'], ['pass', 'x']]) {
+      const i = document.createElement('input');
+      i.name = k; i.placeholder = ph; i.value = p[k] || '';
+      r.append(i);
+    }
+    return r;
+  }));
+}
+for (const id of ['level', 'night_level', 'price_kwh', 'currency']) $(id).addEventListener('input', summary);
+$('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = {
+    level: +$('level').value, night: $('night').value.trim(), night_level: +$('night_level').value, tz: $('tz').value,
+    pools: [...$('pools').children].map(r => ({addr: r.children[0].value, user: r.children[1].value, pass: r.children[2].value})),
+    pool_api: $('pool_api').value.trim(), pool_api_ca: $('pool_api_ca').value.trim(),
+    price_kwh: +$('price_kwh').value || 0, currency: $('currency').value.trim(),
+    coinbase_tag: $('coinbase_tag').value.trim(), fan_fixed: +$('fan_fixed').value, fan_target: +$('fan_target').value,
+  };
+  const b = e.target.querySelector('button[type=submit]');
+  b.disabled = true;
+  msg('Saving', true);
+  try {
+    const r = await fetch(api('/api/settings'), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    if (!r.ok) { msg(await r.text(), false); return; }
+    const res = await r.json();
+    msg(res.restart ? 'Saved. nano3d restarts to use the new pools.' : 'Saved.', true);
+  } catch (err) {
+    msg('No answer from the miner: ' + err.message, false);
+  } finally {
+    b.disabled = false;
+  }
+});
+load().catch(() => msg('Could not load the settings.', false));
+</script>
+</body>
+</html>

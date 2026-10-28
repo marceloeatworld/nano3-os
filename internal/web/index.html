@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>nano3-os</title>
+<style>
+/* A Grafana-like dark dashboard: bordered panels on a near-black canvas, muted titles,
+   big stat values coloured by threshold, gradient-filled sparklines. Light scheme kept. */
+:root { --bg: #f4f5f5; --card: #fff; --fg: #24292e; --dim: #6e7680; --line: #dfe2e6; --accent: #3d71d9; --bad: #e0226e; --warn: #c7860a; --good: #1a9f5f;
+  --c1: #3d71d9; --c2: #e8741a; --c3: #8e4ad3; --c4: #e0226e; --c5: #1a9f5f; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111217; --card: #181b1f; --fg: #d8d9df; --dim: #9fa7b3; --line: #2c3235; --accent: #5794f2; --bad: #f2495c; --warn: #fade2a; --good: #73bf69;
+    --c1: #5794f2; --c2: #ff9830; --c3: #b877d9; --c4: #f2495c; --c5: #73bf69; }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-variant-numeric: tabular-nums; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+header strong { font-size: 16px; letter-spacing: .02em; display: flex; align-items: center; gap: 8px; }
+#dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); box-shadow: 0 0 8px currentColor; color: var(--dim); }
+#dot.good { background: var(--good); color: var(--good); }
+#dot.bad { background: var(--bad); color: var(--bad); }
+header span { color: var(--dim); font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+header a { color: var(--accent); text-decoration: none; }
+header a:hover { text-decoration: underline; }
+header button { padding: 3px 10px; font: inherit; font-size: 12px; color: var(--dim); background: transparent; border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
+header button:hover { color: var(--fg); border-color: var(--dim); }
+body.private .priv { filter: blur(7px); user-select: none; }
+main { max-width: 1360px; margin: 0 auto; padding: 12px 16px 24px; display: grid; gap: 10px; grid-template-columns: repeat(4, 1fr); }
+#hero { grid-column: span 2; }
+#poolcard { grid-column: span 3; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr 1fr; } #poolcard { grid-column: span 1; } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 3px; padding: 10px 14px 12px; overflow-wrap: anywhere; min-width: 0; }
+.wide { grid-column: 1 / -1; }
+.label { color: var(--dim); font-size: 12px; }
+.card > .label:first-child { font-size: 12px; font-weight: 500; letter-spacing: .03em; text-transform: uppercase; margin-bottom: 4px; }
+.big { font-size: 46px; font-weight: 600; line-height: 1.1; color: var(--accent); letter-spacing: -.02em; }
+.val { font-size: 24px; font-weight: 600; line-height: 1.25; margin: 2px 0; }
+#pool { font-size: 18px; }
+.bad { color: var(--bad); }
+.warn { color: var(--warn); }
+.good { color: var(--good); }
+a { color: var(--accent); }
+.asics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+@media (max-width: 560px) { .asics { grid-template-columns: repeat(2, 1fr); } }
+.asic { text-align: center; border-radius: 3px; padding: 6px 0; background: var(--bg); border: 1px solid var(--line); }
+.asic b { font-size: 18px; font-weight: 600; }
+.asic .label { font-size: 11px; }
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.levels { width: 100%; border-collapse: collapse; margin-top: 4px; white-space: nowrap; }
+table.levels th, table.levels td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+table.levels th:first-child, table.levels td:first-child { text-align: left; }
+table.levels th { color: var(--dim); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+table.levels tr.now td { font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+table.levels tr.now td:first-child { box-shadow: inset 3px 0 var(--accent); }
+@media (max-width: 560px) { .optional { display: none; } }
+ul.checks { margin: 6px 0 0; padding: 0; list-style: none; }
+ul.checks li { padding: 3px 0; font-size: 13px; }
+.charts { display: grid; gap: 12px; grid-template-columns: repeat(5, 1fr); margin-top: 8px; }
+@media (max-width: 1200px) { .charts { grid-template-columns: 1fr; } }
+.charts .label b, #pv b { color: var(--fg); font-weight: 500; }
+#pv b.bad { color: var(--bad); }
+svg { width: 100%; height: 66px; display: block; margin-top: 4px; }
+.axis { display: flex; justify-content: space-between; color: var(--dim); font-size: 10px; margin-top: 2px; }
+#err { display: none; }
+@media (max-width: 560px) {
+  main { padding: 10px 12px 20px; gap: 8px; }
+  #poolcard, #sharescard { grid-column: 1 / -1; }
+  .card { padding: 8px 10px 10px; }
+  .big { font-size: 40px; }
+  .val { font-size: 21px; }
+  #verwrap { display: none; }
+}
+</style>
+</head>
+<body>
+<header><strong><span id="dot"></span>nano3-os</strong><span><span id="verwrap"><span id="ver"></span> &middot;</span> <a href="/settings">Settings</a><button id="privacy" type="button" title="Blur the pool, the address and the IP, for a screenshot">Blur private</button></span></header>
+<main>
+  <div class="card wide bad" id="err">No answer from the miner.</div>
+  <div class="card" id="hero"><div class="label">Hashrate (MM)</div><span class="big" id="ths">-</span> TH/s
+    <div class="label">expected <span id="exp">-</span> TH/s &middot; level <span id="level"></span> &middot; safety <span id="safety"></span> &middot; up <span id="up"></span></div></div>
+
+  <div class="card"><div class="label">Power drawn (input)</div><div class="val" id="pw">-</div>
+    <div class="label"><span id="vin">-</span> &middot; <span id="ain">-</span> &middot; level nominal <span id="lvw">-</span></div></div>
+  <div class="card"><div class="label">Efficiency (lower is better)</div><div class="val" id="jth">-</div>
+    <div class="label"><span id="kwhday">-</span> kWh/day <span id="cost"></span> &middot; since start <span id="kwh">-</span> kWh</div></div>
+
+  <div class="card"><div class="label">ASIC temperature, mean / max</div><div class="val" id="temp">-</div>
+    <div class="label">fan target <span id="target"></span> &deg;C</div></div>
+  <div class="card"><div class="label">Fan</div><div class="val" id="fan">-</div></div>
+  <div class="card"><div class="label">Chip health</div><div class="val" id="dh">-</div>
+    <div class="label">MM error rate &middot; PLL <span id="pll">-</span> MHz</div></div>
+  <div class="card"><div class="label">Checks</div><ul class="checks" id="checks"></ul></div>
+
+  <div class="card" id="sharescard"><div class="label">Shares accepted / rejected</div><div class="val"><span class="good" id="acc">-</span> / <span id="rej">-</span></div>
+    <div class="label">valid nonces <span id="valid"></span> &middot; best <span id="best"></span> zero bits</div></div>
+  <div class="card" id="poolcard"><div class="label">Pool</div><div class="val priv" id="pool">-</div>
+    <div class="label"><span class="priv" id="user"></span> &middot; diff <span id="diff"></span></div>
+    <div class="label" id="pv" style="display: none">seen by the pool <b id="pvths">-</b> &middot; best share <b id="pvbest"></b> &middot; <span class="priv" id="pvseen"></span></div></div>
+
+  <div class="card wide"><div class="label">Power levels: what each work level draws, hashes and costs</div>
+    <div class="scroll"><table class="levels"><thead><tr><th>Level</th><th>Power</th><th>Hashrate</th><th class="optional">J/TH</th><th class="optional">kWh/day</th><th>Cost/day</th><th class="optional">Cost/month</th></tr></thead><tbody id="levels"></tbody></table></div>
+    <div class="label">Power is the MM's nominal figure for the level; hashrate is the one measured at that level (until a level has run 10 minutes, an estimate from its clocks). Change the level in <a href="/settings">Settings</a>.</div></div>
+  <div class="card wide"><div class="label">Last 24 h, one point a minute, each scale from zero</div><div class="charts" id="charts"></div></div>
+
+  <div class="card wide"><div class="label">ASICs: temperature &deg;C, voltage (MM units), error share</div><div class="asics" id="asics"></div></div>
+  <div class="card wide label">IP <span class="priv" id="ip"></span> &middot; JSON: <a href="/api/status">/api/status</a>, <a href="/api/history">/api/history</a>.
+    Power, voltage and error readings come from the MM's reports; their meanings were worked out by reverse engineering (README, section 3).</div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const api = p => location.origin + p; // fetch() rejects a URL with user:pass, location.origin has none
+function dur(s) {
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return (d ? d + 'd ' : '') + (d || h ? h + 'h ' : '') + m + 'm';
+}
+function si(v) {
+  const u = ['', 'k', 'M', 'G', 'T', 'P'];
+  let i = 0;
+  while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
+  return v.toPrecision(3) + u[i];
+}
+// Rules of thumb shown under "Checks": each is [level, text]; level is good, warn or bad.
+function checks(s) {
+  const c = [];
+  c.push(s.safety === 'ok' ? ['good', 'Temperatures within the limit'] : ['bad', 'Over-heat safety: ' + s.safety]);
+  c.push(s.pool ? ['good', 'Pool connected'] : ['bad', 'Pool lost, reconnecting']);
+  const sub = s.accepted + s.rejected;
+  if (sub >= 20 && s.rejected / sub > 0.02) c.push(['warn', 'More than 2 % of shares rejected']);
+  if (!s.warming_up && s.expected_ths > 0 && s.ths < 0.85 * s.expected_ths) c.push(['warn', 'Hashrate under 85 % of what the MM expects']);
+  if (!s.warming_up && s.hw_error_pct > 5) c.push(['warn', 'MM error rate above 5 %']);
+  if (s.power_w < 0) c.push(['warn', 'No power report from the MM for a minute']);
+  else if (s.input_v > 0 && s.input_v < 25) c.push(['warn', 'Input voltage low (' + s.input_v.toFixed(1) + ' V): check the power adapter']);
+  const badChip = (s.asic_err_pct || []).findIndex(e => e > 10);
+  if (badChip >= 0) c.push(['warn', 'ASIC ' + badChip + ': more than 10 % errors']);
+  return c;
+}
+// History charts: name, unit, decimals, value of a sample (null when unknown), colour.
+const SERIES = [
+  ['Hashrate', 'TH/s', 2, d => d.ths > 0 ? d.ths : null, 'c1'],
+  ['Power', 'W', 0, d => d.power_w >= 0 ? d.power_w : null, 'c2'],
+  ['Efficiency', 'J/TH', 1, d => d.power_w > 0 && d.ths > 0 ? d.power_w / d.ths : null, 'c3'],
+  ['Hottest ASIC', '°C', 0, d => d.temp_max > 0 ? d.temp_max : null, 'c4'],
+  ['Fan', '%', 0, d => d.fan_pct >= 0 ? d.fan_pct : null, 'c5'],
+];
+// spark draws one series from zero to 10 % above its maximum, so noise stays flat and
+// a real drop shows.
+function spark(data, f, c) {
+  const W = 300, H = 66, B = H - 2, v = data.map(f).filter(x => x !== null);
+  if (data.length < 2 || !v.length) return '<div class="axis"><span>collecting, one point a minute</span></div>';
+  const t0 = data[0].t, t1 = data[data.length - 1].t, hi = Math.max(...v) * 1.1 || 1;
+  const xy = data.map(d => {
+    const y = f(d);
+    return y === null ? null : [((d.t - t0) / (t1 - t0) * W).toFixed(1), (B - y / hi * (B - 6)).toFixed(1)];
+  }).filter(Boolean);
+  const line = xy.map(p => p.join(',')).join(' ');
+  const area = xy[0][0] + ',' + B + ' ' + line + ' ' + xy[xy.length - 1][0] + ',' + B;
+  const hm = t => new Date(t * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  return '<svg viewBox="0 0 300 66" preserveAspectRatio="none">' +
+    '<defs><linearGradient id="g' + c + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--' + c + ')" stop-opacity=".35"/><stop offset="1" stop-color="var(--' + c + ')" stop-opacity="0"/></linearGradient></defs>' +
+    '<line x1="0" y1="' + B + '" x2="300" y2="' + B + '" stroke="var(--line)" vector-effect="non-scaling-stroke"/>' +
+    '<polygon fill="url(#g' + c + ')" points="' + area + '"/>' +
+    '<polyline fill="none" stroke="var(--' + c + ')" stroke-width="1.6" stroke-linejoin="round" vector-effect="non-scaling-stroke" points="' + line + '"/></svg>' +
+    '<div class="axis"><span>' + hm(t0) + '</span><span>' + hm(t1) + '</span></div>'; // HTML, so it never stretches with the SVG
+}
+async function history() {
+  try {
+    const h = await (await fetch(api('/api/history'), {cache: 'no-store'})).json();
+    $('charts').replaceChildren(...SERIES.map(([name, unit, digits, f, c]) => {
+      const v = h.map(f).filter(x => x !== null), e = document.createElement('div');
+      const r = v.length ? Math.min(...v).toFixed(digits) + ' to ' + Math.max(...v).toFixed(digits) + ' ' + unit : '';
+      e.innerHTML = '<div class="label">' + name + ' <b>' + r + '</b></div>' + spark(h, f, c);
+      return e;
+    }));
+  } catch (e) {}
+}
+async function tick() {
+  try {
+    const r = await fetch(api('/api/status'), {cache: 'no-store'});
+    if (!r.ok) throw new Error(r.status);
+    const s = await r.json();
+    $('err').style.display = 'none';
+    $('ver').textContent = s.version;
+    $('ths').textContent = s.ths.toFixed(2);
+    $('exp').textContent = s.expected_ths > 0 ? s.expected_ths.toFixed(2) : '-';
+    $('level').textContent = s.level + (s.night ? ' (night)' : '') + (s.warming_up ? ', warming up' : '');
+    $('safety').textContent = s.safety;
+    $('safety').className = s.safety === 'ok' ? 'good' : 'bad';
+    $('dot').className = s.safety === 'ok' && s.pool ? 'good' : 'bad';
+    $('up').textContent = dur(s.uptime_s);
+
+    const havePower = s.power_w >= 0;
+    $('pw').textContent = havePower ? s.power_w + ' W' : '-';
+    $('vin').textContent = havePower ? s.input_v.toFixed(2) + ' V' : '- V';
+    $('ain').textContent = havePower ? s.input_a.toFixed(2) + ' A' : '- A';
+    const lv = (s.levels || [])[s.level];
+    $('lvw').textContent = lv ? lv.watts + ' W' : '-';
+    $('levels').replaceChildren(...(s.levels || []).map(l => {
+      const tr = document.createElement('tr'), kwh = l.watts * 24 / 1000;
+      tr.className = l.level === s.level ? 'now' : '';
+      const cost = v => s.price_kwh > 0 ? (v * s.price_kwh).toFixed(2) + ' ' + s.currency : '-';
+      [l.level + (l.level === s.level ? ' (now)' : ''), l.watts + ' W',
+        l.est_ths > 0 ? l.est_ths.toFixed(2) + ' TH/s' : '-', l.est_ths > 0 ? (l.watts / l.est_ths).toFixed(1) : '-',
+        kwh.toFixed(2), cost(kwh), cost(kwh * 30)].forEach((c, k) => {
+        const td = document.createElement('td');
+        td.textContent = c; // the currency is free text from the settings
+        if (k === 3 || k === 4 || k === 6) td.className = 'optional'; // dropped on a phone
+        tr.appendChild(td);
+      });
+      return tr;
+    }));
+    $('jth').textContent = s.j_per_th > 0 ? s.j_per_th.toFixed(1) + ' J/TH' : '-';
+    const kwhDay = havePower ? s.power_w * 24 / 1000 : 0;
+    $('kwhday').textContent = havePower ? kwhDay.toFixed(2) : '-';
+    $('cost').textContent = havePower && s.price_kwh > 0 ? '· ' + (kwhDay * s.price_kwh).toFixed(2) + ' ' + s.currency + '/day' : '';
+    $('kwh').textContent = s.energy_kwh.toFixed(3);
+
+    $('checks').replaceChildren(...checks(s).map(([lvl, t]) => {
+      const li = document.createElement('li');
+      li.className = lvl;
+      li.textContent = (lvl === 'good' ? '✓ ' : '! ') + t;
+      return li;
+    }));
+
+    $('temp').textContent = s.temp_mean < 0 ? '-' : s.temp_mean.toFixed(0) + ' / ' + s.temp_max.toFixed(0) + ' °C';
+    $('temp').className = 'val' + (s.safety !== 'ok' || s.temp_max >= 95 ? ' bad' : s.temp_max >= 94 ? ' warn' : '');
+    $('target').textContent = s.target_temp;
+    $('fan').textContent = s.fan_pct < 0 ? 'stock' : s.fan_pct + ' %' + (s.fan_fixed ? ' · floor' : '');
+    $('dh').textContent = s.hw_error_pct.toFixed(2) + ' %';
+    $('dh').className = 'val' + (!s.warming_up && s.hw_error_pct > 5 ? ' warn' : '');
+    $('pll').textContent = (s.pll_mhz || []).filter(f => f > 0).join(' / ') || '-';
+
+    $('acc').textContent = s.accepted;
+    $('rej').textContent = s.rejected + (s.rejected ? ' (' + (100 * s.rejected / (s.accepted + s.rejected)).toFixed(1) + ' %)' : '');
+    $('valid').textContent = s.valid;
+    $('best').textContent = s.best_zero_bits;
+    $('pool').textContent = s.pool || 'lost, reconnecting';
+    $('pool').className = 'val priv' + (s.pool ? '' : ' bad');
+    $('user').textContent = s.pool_user;
+    $('diff').textContent = s.pool_diff;
+    $('ip').textContent = s.ip;
+    $('pv').style.display = s.pool_view ? '' : 'none';
+    if (s.pool_view_error) {
+      $('pvths').textContent = 'no answer';
+      $('pvbest').textContent = '-';
+      $('pvseen').textContent = s.pool_view_error;
+    } else {
+      $('pvths').textContent = s.pool_last_seen_s < 0 ? 'waiting' : s.pool_seen_ths.toFixed(2) + ' TH/s';
+      $('pvbest').textContent = si(s.pool_best_diff);
+      $('pvseen').textContent = s.pool_last_seen_s < 0 ? 'not seen yet' : 'seen ' + s.pool_last_seen_s + ' s ago';
+    }
+    $('pvths').className = s.pool_view_error ? 'bad' : '';
+
+    $('asics').replaceChildren(...s.asic_temps.map((t, i) => {
+      const e = document.createElement('div');
+      e.className = 'asic';
+      const v = (s.asic_volts || [])[i], er = (s.asic_err_pct || [])[i];
+      e.innerHTML = '<div>' + i + ': <b' + (t >= 95 ? ' class="bad"' : t >= 92 ? ' class="warn"' : '') + '>' + (t > 0 ? t.toFixed(0) : '-') + '</b></div><div class="label">' +
+        (v ? v.toFixed(0) : '-') + ' &middot; ' + (er !== undefined ? er.toFixed(1) + ' %' : '-') + '</div>';
+      return e;
+    }));
+  } catch (e) {
+    $('err').style.display = 'block';
+    $('dot').className = 'bad';
+  }
+}
+// Blur the pool, the address and the IP (for a screenshot); the choice stays in this browser.
+function privacy(on) {
+  document.body.classList.toggle('private', on);
+  $('privacy').textContent = on ? 'Show private' : 'Blur private';
+  try { localStorage.setItem('private', on ? '1' : ''); } catch (e) {}
+}
+$('privacy').addEventListener('click', () => privacy(!document.body.classList.contains('private')));
+try { privacy(localStorage.getItem('private') === '1'); } catch (e) {}
+// A phone pauses timers in the background: refresh as soon as the page is back in view.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { tick(); history(); } });
+tick();
+history();
+setInterval(tick, 3000);
+setInterval(history, 60000);
+</script>
+</body>
+</html>
